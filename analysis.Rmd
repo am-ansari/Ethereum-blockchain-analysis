@@ -1,0 +1,740 @@
+---
+title: "Analysis on Ethereum blockchain"
+output:
+  pdf_document: default
+  html_notebook: default
+  html_document:
+    df_print: paged
+---
+### We have chosen the three tokens as per the criteria specified in the problem statement. The modulo of sum of team member's UTD ID by 20 is 3. The top 3rd, 4th and 5th biggest tokens are networkomisegoTX, networkyocoinTX, and networkgolemTX
+
+## Loading libraries 
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(fitdistrplus)
+```
+#Question 1
+
+## Analysis on token 'networkgolemTX'
+
+####Loading token graph edge file into a dataframe
+
+```{r}
+networkgolemTX <- read.csv('data/networkgolemTX.txt', sep=" ", header = FALSE)
+names(networkgolemTX) <- c("fromAddress", "toAddress", "unixTime", "tokenAmount")
+head(networkgolemTX)
+```
+
+####Checking the data type for each column
+
+```{r}
+str(networkgolemTX)
+```
+####All columns have correct data types. We'll now check if there are any transactions with same addresses
+
+```{r}
+sameTx <- networkgolemTX[networkgolemTX$fromAddress == networkgolemTX$toAddress, ] 
+#head(sameTx)
+nrow(sameTx)
+```
+
+####It can be observed that there were 635 transactions that occured where sender and recipient have the same address.
+
+```{r}
+nrow(unique(sameTx["fromAddress"]))
+```
+
+####We observe that there are 427 unique addresses which have self transactions.These are malicious user transactions and we'll remove them from our analysis.
+
+```{r}
+cleanedGolemTX <- networkgolemTX[networkgolemTX$fromAddress != networkgolemTX$toAddress, ] 
+```
+
+####Checking if any of the token amount exceeds the total supply of the coin, which is limited to (1 x 10^9)  (https://coinmarketcap.com/currencies/golem-network-tokens/)
+
+####Each coin can have upto a maximum of 10^18 subunits. Therefore, the token amount that can exist in the data should be less than total supply * 10^18. Anything beyond this amount will be considered as outliers and removed from analysis.
+
+```{r}
+subUnits <- 10^18
+totalSupply <- 1 * 10^9
+outliersDf <- cleanedGolemTX[cleanedGolemTX$tokenAmount > totalSupply * subUnits,]
+nrow(outliersDf)
+```
+
+####It can be observed that for 25 transactions, the token amount is larger than the expected total supply of the coins. This anomaly can be attributed to the BatchOverflow Exploit which resulted in generating astronomical values. We'll remove such transaction from our analysis.
+
+####After removing the invalid transactions, we'll generate the 'buy' distribution. This will contain the frequency of number of buys performed by users
+
+```{r}
+filteredGolemTX <- cleanedGolemTX[cleanedGolemTX$tokenAmount <= totalSupply * subUnits,]
+#buys.distribution <- filteredGolemTX %>% group_by(toNode) %>% summarise(n = n()) %>% ungroup
+pair.users.buys <- filteredGolemTX %>% group_by(toAddress) %>% summarise(n = n(), sumAmount=sum(tokenAmount)) %>% ungroup
+head(pair.users.buys)
+```
+
+###Plotting density distribution for 'Buy' transactions. We'll check if we are able to identify frequency of number of buys between 2 users 
+
+```{r}
+
+ggplot(data=pair.users.buys, aes(pair.users.buys$n)) + 
+  geom_density(fill='yellow', color='yellow') + 
+  scale_x_continuous(breaks=seq(0,15,1), limits=c(0,15)) + 
+  xlab("No. of buys (Pair-wise)") +
+  ylab("Density") + 
+  ggtitle("Buy Distribution") +
+  theme(text = element_text(color = "#444444")
+        ,panel.background = element_rect(fill = '#444B5A')
+        ,panel.grid.minor = element_line(color = '#4d5566')
+        ,panel.grid.major = element_line(color = '#586174')
+        ,plot.title = element_text(size = 24)
+        ,axis.title = element_text(size = 18, color = '#555555')
+        ,axis.title.y = element_text(vjust = .5, angle = 0)
+        ,axis.title.x = element_text(hjust = .5)
+  ) 
+
+```
+
+###Similarly, we'll generate the 'sell' distribution. This will contain the frequency of number of sells performed by users
+
+```{r}
+pair.users.sells <- filteredGolemTX %>% group_by(fromAddress) %>% summarise(n = n(), sumAmount=sum(tokenAmount))
+head(pair.users.sells)
+```
+
+###Plotting density distribution for 'Sell' transactions
+```{r}
+ggplot(data=pair.users.sells, aes(pair.users.sells$n)) + 
+  geom_density(fill='cyan', color='cyan') + 
+  scale_x_continuous(breaks=seq(0,15,1), limits=c(0,15)) + 
+  xlab("No. of sells (Pair-wise)") +
+  ylab("Density") + 
+  ggtitle("Sell Distribution") + 
+  theme(text = element_text(color = "#444444")
+        ,panel.background = element_rect(fill = '#444B5A')
+        ,panel.grid.minor = element_line(color = '#4d5566')
+        ,panel.grid.major = element_line(color = '#586174')
+        ,plot.title = element_text(size = 24)
+        ,axis.title = element_text(size = 18, color = '#555555')
+        ,axis.title.y = element_text(vjust = .5, angle = 0)
+        ,axis.title.x = element_text(hjust = .5)
+  ) 
+```
+
+###Now that we have seen density distributions for both types of transactions, we'll individually fit the data in different distribution models
+
+```{r}
+fit.buy.norm <- fitdist(pair.users.buys$n, "norm")
+fit.buy.weibull  <- fitdist(pair.users.buys$n, "weibull")
+fit.buy.gamma  <- fitdist(pair.users.buys$n, "gamma")
+fit.buy.lnorm <- fitdist(pair.users.buys$n, "lnorm")
+fit.buy.exp <- fitdist(pair.users.buys$n, "exp")
+fit.buy.logis <- fitdist(pair.users.buys$n, "logis")
+```
+
+####Plotting all distributions and check which one satisfies our 'Buy' distribution
+```{r}
+#par(mfrow=c(2,2))
+plot.legend <- c("Normal", "Weibull", "lognormal", "gamma", "exponential", "logistic")
+denscomp(list(fit.buy.norm,fit.buy.weibull , fit.buy.lnorm, fit.buy.gamma, fit.buy.exp,fit.buy.logis), legendtext = plot.legend, xlim=c(0,15), ylim=c(0,1))
+```
+```{r}
+gofstat(list(fit.buy.norm,fit.buy.weibull , fit.buy.lnorm, fit.buy.gamma, fit.buy.exp,fit.buy.logis),fitnames = c("Normal", "Weibull", "Lognormal", "Gamma", "Exponential", "Logistic"))
+```
+
+####From the goodness of fit statistics and the previous graph, it seems lognormal is a better fit than the rest.
+
+####Estimating parmaters for this distribution 
+```{r}
+fit.buy.lnorm
+```
+
+```{r}
+ests.buys <- bootdist(fit.buy.lnorm, niter = 100)
+summary(ests.buys)
+```
+
+####Now fitting distributions for sell transactions...
+```{r}
+fit.sell.norm <- fitdist(pair.users.sells$n, "norm")
+fit.sell.weibull  <- fitdist(pair.users.sells$n, "weibull")
+fit.sell.gamma  <- fitdist(pair.users.sells$n, "gamma")
+fit.sell.lnorm <- fitdist(pair.users.sells$n, "lnorm")
+fit.sell.exp <- fitdist(pair.users.sells$n, "exp")
+fit.sell.logis <- fitdist(pair.users.sells$n, "logis")
+```
+
+####Plotting all distributions and check which one satisfies our 'Sell' distribution
+```{r}
+plot.legend <- c("Normal","Weibull", "lognormal", "gamma", "exponential", "logistic")
+denscomp(list(fit.sell.norm, fit.sell.weibull, fit.sell.lnorm, fit.sell.gamma, fit.sell.exp,fit.sell.logis), legendtext = plot.legend, xlim=c(0,15), ylim=c(0,1))
+```
+
+```{r}
+gofstat(list(fit.sell.norm, fit.sell.weibull,fit.sell.lnorm,fit.sell.gamma,fit.sell.exp,fit.sell.logis),fitnames = c("Normal", "Weibull", "Lognormal", "Gamma", "Exponential", "Logistic"))
+```
+
+####From the goodness of fit statistics and the previous graph, it seems lognormal is a better fit than the rest
+
+####Estimating parmaters for this distribution 
+
+```{r}
+fit.sell.lnorm
+```
+
+
+```{r}
+ests.sells <- bootdist(fit.sell.lnorm, niter = 100)
+summary(ests.sells)
+```
+
+## Analysis on token 'networkyocoinTX'
+
+####Loading token graph edge file into a dataframe
+
+```{r}
+networkyocoinTX <- read.csv('data/networkyocoinTX.txt', sep=" ", header = FALSE)
+names(networkyocoinTX) <- c("fromAddress", "toAddress", "unixTime", "tokenAmount")
+head(networkyocoinTX)
+```
+####Checking the data type for each column
+
+```{r}
+str(networkyocoinTX)
+```
+
+####All columns have correct data types. We'll now check if there are any transactions with same addresses
+```{r}
+sameTxYocoin <- networkyocoinTX[networkyocoinTX$fromAddress == networkyocoinTX$toAddress, ] 
+nrow(sameTxYocoin)
+```
+
+####It can be observed that there were 635 transactions that occured where sender and recipient have the same address.
+
+```{r}
+nrow(unique(sameTxYocoin["fromAddress"]))
+```
+####We observe that there are 4 unique addresses which have self transactions.These are malicious user transactions and we'll remove them from our analysis.
+
+```{r}
+cleanedYocoinTX <- networkyocoinTX[networkyocoinTX$fromAddress != networkyocoinTX$toAddress, ] 
+```
+
+####Checking if any of the token amount exceeds the total supply of the coin, which is limited to (554925923) (https://coinmarketcap.com/currencies/yocoin/)
+
+####Each coin can have upto a maximum of 10^18 subunits. Therefore, the token amount that can exist in the data should be less than total supply * 10^18. Anything beyond this amount will be considered as outliers and removed from analysis.
+
+```{r}
+subUnits.yocoin <- 10^18
+totalSupply.yocoin <- 554925923
+outliersDf.yocoin <- cleanedYocoinTX[cleanedYocoinTX$tokenAmount > totalSupply.yocoin * subUnits.yocoin,]
+nrow(outliersDf.yocoin)
+```
+
+####It can be observed that for 90 transactions, the token amount is larger than the expected total supply of the coins. This anomaly can be attributed to the BatchOverflow Exploit which resulted in generating astronomical values. We'll remove such transaction from our analysis.
+
+####After removing the invalid transactions, we'll generate the 'buy' distribution. This will contain the frequency of number of buys performed by users
+
+```{r}
+filteredYocoinTX <- cleanedYocoinTX[cleanedYocoinTX$tokenAmount <= totalSupply.yocoin * subUnits.yocoin,]
+#buys.distribution <- filteredGolemTX %>% group_by(toNode) %>% summarise(n = n()) %>% ungroup
+yocoin.pair.users.buys <- filteredYocoinTX %>% group_by(toAddress) %>% summarise(n = n(), sumAmount=sum(tokenAmount)) %>% ungroup
+head(yocoin.pair.users.buys)
+```
+
+###Plotting density distribution for 'Buy' transactions. We'll check if we are able to identify frequency of number of buys between 2 users
+
+```{r}
+ggplot(data=yocoin.pair.users.buys, aes(yocoin.pair.users.buys$n)) + 
+  geom_density(fill='yellow', color='yellow') + 
+  scale_x_continuous(breaks=seq(0,160,20), limits=c(0,160)) + 
+  xlab("No. of buys (Pair-wise)") +
+  ylab("Density") + 
+  ggtitle("Buy Distribution") +
+  theme(text = element_text(color = "#444444")
+        ,panel.background = element_rect(fill = '#444B5A')
+        ,panel.grid.minor = element_line(color = '#4d5566')
+        ,panel.grid.major = element_line(color = '#586174')
+        ,plot.title = element_text(size = 24)
+        ,axis.title = element_text(size = 18, color = '#555555')
+        ,axis.title.y = element_text(vjust = .5, angle = 0)
+        ,axis.title.x = element_text(hjust = .5)
+  ) 
+```
+###Similarly, we'll generate the 'sell' distribution. This will contain the frequency of number of sells performed by users
+```{r}
+yocoin.pair.users.sells <- filteredYocoinTX %>% group_by(fromAddress) %>% summarise(n = n(), sumAmount=sum(tokenAmount))
+head(yocoin.pair.users.sells)
+```
+
+####Plotting density distribution for 'Sell' transactions
+```{r}
+ggplot(data=yocoin.pair.users.sells, aes(yocoin.pair.users.sells$n)) + 
+  geom_density(fill='cyan', color='cyan') + 
+  scale_x_continuous(breaks=seq(0,20,1), limits=c(0,20)) + 
+  xlab("No. of sells (Pair-wise)") +
+  ylab("Density") + 
+  ggtitle("Sell Distribution") + 
+  theme(text = element_text(color = "#444444")
+        ,panel.background = element_rect(fill = '#444B5A')
+        ,panel.grid.minor = element_line(color = '#4d5566')
+        ,panel.grid.major = element_line(color = '#586174')
+        ,plot.title = element_text(size = 24)
+        ,axis.title = element_text(size = 18, color = '#555555')
+        ,axis.title.y = element_text(vjust = .5, angle = 0)
+        ,axis.title.x = element_text(hjust = .5)
+  )
+```
+###Now that we have seen density distributions for both types of transactions, we'll individually fit the data in different distribution models
+
+```{r}
+yocoin.fit.buy.norm <- fitdist(yocoin.pair.users.buys$n, "norm")
+yocoin.fit.buy.weibull <- fitdist(yocoin.pair.users.buys$n, "weibull")
+yocoin.fit.buy.gamma <- fitdist(yocoin.pair.users.buys$n, "gamma")
+yocoin.fit.buy.lnorm <- fitdist(yocoin.pair.users.buys$n, "lnorm")
+yocoin.fit.buy.exp <- fitdist(yocoin.pair.users.buys$n, "exp")
+yocoin.fit.buy.logis <- fitdist(yocoin.pair.users.buys$n, "logis")
+```
+
+####Plotting all distributions and check which one satisfies our 'Buy' distribution
+
+```{r}
+plot.legend <- c("Normal", "Weibull", "lognormal", "gamma", "exponential", "logistic")
+denscomp(list(yocoin.fit.buy.norm,yocoin.fit.buy.weibull , yocoin.fit.buy.lnorm, yocoin.fit.buy.gamma, yocoin.fit.buy.exp,yocoin.fit.buy.logis), legendtext = plot.legend, xlim=c(0,160), ylim=c(0,0.1))
+```
+
+```{r}
+gofstat(list(yocoin.fit.buy.norm,yocoin.fit.buy.weibull , yocoin.fit.buy.lnorm, yocoin.fit.buy.gamma, yocoin.fit.buy.exp,yocoin.fit.buy.logis),fitnames = c("Normal", "Weibull", "Lognormal", "Gamma", "Exponential", "Logistic"))
+```
+
+####From the goodness of fit statistics and the previous graph, it seems lognormal is a better fit than the rest.
+
+####Estimating parmaters for this distribution
+
+```{r}
+yocoin.fit.buy.lnorm
+```
+
+```{r}
+yocoin.ests.buys <- bootdist(yocoin.fit.buy.lnorm, niter = 1000)
+summary(yocoin.ests.buys)
+```
+
+####Now fitting distributions for sell transactions.
+
+```{r}
+yocoin.fit.sell.norm <- fitdist(yocoin.pair.users.sells$n, "norm")
+yocoin.fit.sell.weibull <- fitdist(yocoin.pair.users.sells$n, "weibull")
+yocoin.fit.sell.gamma <- fitdist(yocoin.pair.users.sells$n, "gamma")
+yocoin.fit.sell.lnorm <- fitdist(yocoin.pair.users.sells$n, "lnorm")
+yocoin.fit.sell.exp <- fitdist(yocoin.pair.users.sells$n, "exp")
+yocoin.fit.sell.logis <- fitdist(yocoin.pair.users.sells$n, "logis")
+```
+
+###Plotting all distributions and check which one satisfies our 'Sell' distribution
+
+```{r}
+plot.legend <- c("Normal","Weibull", "lognormal", "gamma", "exponential", "logistic")
+denscomp(list(yocoin.fit.sell.norm, yocoin.fit.sell.weibull, yocoin.fit.sell.lnorm, yocoin.fit.sell.gamma, yocoin.fit.sell.exp,yocoin.fit.sell.logis),plotstyle = "graphics", legendtext = plot.legend, xlim=c(0,15), ylim=c(0,0.6)) 
+```
+
+```{r}
+gofstat(list(yocoin.fit.sell.norm, yocoin.fit.sell.weibull, yocoin.fit.sell.lnorm, yocoin.fit.sell.gamma, yocoin.fit.sell.exp,yocoin.fit.sell.logis),fitnames = c("Normal", "Weibull", "Lognormal", "Gamma", "Exponential", "Logistic"))
+```
+
+####From the goodness of fit statistics and the previous graph, it seems lognormal is a better fit than the rest
+
+####Estimating parmaters for this distribution
+
+```{r}
+yocoin.fit.sell.lnorm
+```
+
+```{r}
+yocoin.ests.sells <- bootdist(yocoin.fit.sell.lnorm, niter = 100)
+summary(yocoin.ests.sells)
+```
+
+##Analysis on token 'networkomisegoTX'
+
+####Loading token graph edge file into a dataframe
+
+```{r}
+networkomisegoTX <- read.csv('data/networkomisegoTX.txt', sep=" ", header = FALSE)
+names(networkomisegoTX) <- c("fromAddress", "toAddress", "unixTime", "tokenAmount")
+head(networkomisegoTX)
+```
+####We'll now check if there are any transactions with same addresses
+
+```{r}
+sameTxomisegoTX <- networkomisegoTX[networkomisegoTX$fromAddress == networkomisegoTX$toAddress, ] 
+nrow(sameTxomisegoTX)
+```
+####It can be observed that there were 30347 transactions that occured where sender and recipient have the same address
+
+```{r}
+nrow(unique(sameTxomisegoTX["fromAddress"]))
+```
+
+####We observe that there are 259 unique addresses which have self transactions.These are malicious user transactions and we'll remove them from our analysis
+
+```{r}
+cleanedOmisegoTX <- networkomisegoTX[networkomisegoTX$fromAddress != networkomisegoTX$toAddress, ] 
+```
+
+####Checking if any of the token amount exceeds the total supply of the coin, which is limited to 140,245,398 (https://coinmarketcap.com/currencies/omisego/)
+
+####Each coin can have upto a maximum of 10^18 subunits. Therefore, the token amount that can exist in the data should be less than total supply * 10^18. Anything beyond this amount will be considered as outliers and removed from analysis.
+
+```{r}
+subUnits.omisego <- 10^18
+totalSupply.omisego <- 140245398
+outliersDf.omisego <- cleanedOmisegoTX[cleanedOmisegoTX$tokenAmount > totalSupply.omisego * subUnits.omisego,]
+nrow(outliersDf.omisego)
+```
+
+####It can be observed that for 10 transactions, the token amount is larger than the expected total supply of the coins. This anomaly can be attributed to the BatchOverflow Exploit which resulted in generating astronomical values. We'll remove such transaction from our analysis.
+
+####After removing the invalid transactions, we'll generate the 'buy' distribution. This will contain the frequency of number of buys performed by users
+
+```{r}
+filteredOmisegoTX <- cleanedOmisegoTX[cleanedOmisegoTX$tokenAmount <= totalSupply.omisego * subUnits.omisego,]
+omisego.pair.users.buys <- filteredOmisegoTX %>% group_by(toAddress) %>% summarise(n = n(), sumAmount=sum(tokenAmount)) %>% ungroup
+head(omisego.pair.users.buys)
+```
+###Plotting density distribution for 'Buy' transactions. We'll check if we are able to identify frequency of number of buys between 2 users
+
+```{r}
+ggplot(data=omisego.pair.users.buys, aes(omisego.pair.users.buys$n)) + 
+  geom_density(fill='yellow', color='yellow') + 
+  scale_x_continuous(breaks=seq(0,10,1), limits=c(0,10)) + 
+  xlab("No. of buys (Pair-wise)") +
+  ylab("Density") + 
+  ggtitle("Buy Distribution") +
+  theme(text = element_text(color = "#444444")
+        ,panel.background = element_rect(fill = '#444B5A')
+        ,panel.grid.minor = element_line(color = '#4d5566')
+        ,panel.grid.major = element_line(color = '#586174')
+        ,plot.title = element_text(size = 24)
+        ,axis.title = element_text(size = 18, color = '#555555')
+        ,axis.title.y = element_text(vjust = .5, angle = 0)
+        ,axis.title.x = element_text(hjust = .5)
+  ) 
+```
+###Similarly, we'll generate the 'sell' distribution. This will contain the frequency of number of sells performed by users
+
+```{r}
+omisego.pair.users.sells <- filteredOmisegoTX %>% group_by(fromAddress) %>% summarise(n = n(), sumAmount=sum(tokenAmount))
+head(omisego.pair.users.sells)
+```
+
+###Plotting density distribution for 'Sell' transactions
+```{r}
+ggplot(data=omisego.pair.users.sells, aes(omisego.pair.users.sells$n)) + 
+  geom_density(fill='cyan', color='cyan') + 
+  scale_x_continuous(breaks=seq(0,10,1), limits=c(0,10)) + 
+  xlab("No. of sells (Pair-wise)") +
+  ylab("Density") + 
+  ggtitle("Sell Distribution") + 
+  theme(text = element_text(color = "#444444")
+        ,panel.background = element_rect(fill = '#444B5A')
+        ,panel.grid.minor = element_line(color = '#4d5566')
+        ,panel.grid.major = element_line(color = '#586174')
+        ,plot.title = element_text(size = 24)
+        ,axis.title = element_text(size = 18, color = '#555555')
+        ,axis.title.y = element_text(vjust = .5, angle = 0)
+        ,axis.title.x = element_text(hjust = .5)
+  ) 
+```
+###Now that we have seen density distributions for both types of transactions, we'll individually fit the data in different distribution models
+
+```{r}
+omisego.fit.buy.norm <- fitdist(omisego.pair.users.buys$n, "norm")
+omisego.fit.buy.weibull <- fitdist(omisego.pair.users.buys$n, "weibull")
+omisego.fit.buy.gamma <- fitdist(omisego.pair.users.buys$n, "gamma")
+omisego.fit.buy.lnorm <- fitdist(omisego.pair.users.buys$n, "lnorm")
+omisego.fit.buy.exp <- fitdist(omisego.pair.users.buys$n, "exp")
+omisego.fit.buy.logis <- fitdist(omisego.pair.users.buys$n, "logis")
+```
+
+###Plotting all distributions and check which one satisfies our 'Buy' distribution
+
+```{r}
+plot.legend <- c("Normal", "Weibull", "lognormal", "gamma", "exponential", "logistic")
+denscomp(list(omisego.fit.buy.norm,omisego.fit.buy.weibull , omisego.fit.buy.lnorm, omisego.fit.buy.gamma, omisego.fit.buy.exp,omisego.fit.buy.logis), legendtext = plot.legend, xlim=c(0,10), ylim=c(0,0.7))
+```
+
+```{r}
+gofstat(list(omisego.fit.buy.norm,omisego.fit.buy.weibull , omisego.fit.buy.lnorm, omisego.fit.buy.gamma, omisego.fit.buy.exp,omisego.fit.buy.logis),fitnames = c("Normal", "Weibull", "Lognormal", "Gamma", "Exponential", "Logistic"))
+```
+
+####From the goodness of fit statistics and the previous graph, it seems lognormal is a better fit than the rest.
+
+####Estimating parmaters for this distribution
+
+```{r}
+omisego.fit.buy.lnorm
+```
+
+```{r}
+omisego.ests.buys <- bootdist(omisego.fit.buy.lnorm, niter = 100)
+summary(omisego.ests.buys)
+```
+
+####Now fitting distributions for sell transactions.
+
+```{r}
+omisego.fit.sell.norm <- fitdist(omisego.pair.users.sells$n, "norm")
+omisego.fit.sell.weibull <- fitdist(omisego.pair.users.sells$n, "weibull")
+omisego.fit.sell.gamma <- fitdist(omisego.pair.users.sells$n, "gamma")
+omisego.fit.sell.lnorm <- fitdist(omisego.pair.users.sells$n, "lnorm")
+omisego.fit.sell.exp <- fitdist(omisego.pair.users.sells$n, "exp")
+omisego.fit.sell.logis <- fitdist(omisego.pair.users.sells$n, "logis")
+```
+
+####Plotting all distributions and check which one satisfies our 'Sell' distribution
+
+```{r}
+plot.legend <- c("Normal","Weibull", "lognormal", "gamma", "exponential", "logistic")
+denscomp(list(omisego.fit.sell.norm, omisego.fit.sell.weibull, omisego.fit.sell.lnorm, omisego.fit.sell.gamma, omisego.fit.sell.exp,omisego.fit.sell.logis), legendtext = plot.legend, xlim=c(0,10), ylim=c(0,1))
+```
+
+```{r}
+gofstat(list(omisego.fit.sell.norm, omisego.fit.sell.weibull, omisego.fit.sell.lnorm, omisego.fit.sell.gamma, omisego.fit.sell.exp,omisego.fit.sell.logis),fitnames = c("Normal", "Weibull", "Lognormal", "Gamma", "Exponential", "Logistic"))
+```
+
+####From the goodness of fit statistics and the previous graph, it seems lognormal is a better fit than the rest
+
+####Estimating parmaters for this distribution
+
+```{r}
+omisego.fit.sell.lnorm
+```
+
+```{r}
+omisego.ests.sells <- bootdist(omisego.fit.sell.lnorm, niter = 100)
+summary(omisego.ests.sells)
+```
+
+#Question 2
+
+###To get top buyers and sellers in the 3 tokens, we'll arrange the data in descending order for each of the summarised data
+
+```{r}
+golem.buyers <- pair.users.buys %>% arrange(-n)
+golem.sellers <- pair.users.sells %>% arrange(-n)
+
+yocoin.buyers <- yocoin.pair.users.buys %>% arrange(-n)
+yocoin.sellers <- yocoin.pair.users.sells %>% arrange(-n)
+
+omisego.buyers <- omisego.pair.users.buys %>% arrange(-n)
+omisego.sellers <- omisego.pair.users.sells %>% arrange(-n)
+
+```
+
+##We'll create a regression model for token 'Golem'  
+### Taking K-value as 20 i.e. top 20 buyers, we'll build a regression model based on number of buys with total tokenAmount as outcome
+
+```{r}
+golem.buyers.20 <- head(golem.buyers,20)
+golem.buyers.20
+```
+
+####Creating a scatterplot to check the relation between these addresses and tokenAmount for their buys in'Golem' token. We'll also transform the tokenAmount to it's square root value for better visualization
+
+```{r}
+#golem.buyers.20.data <- filteredGolemTX[filteredGolemTX$toAddress %in% golem.buyers.20, ]
+#golem.buyers.20.data$toAddress <- as.character(golem.buyers.20.data$toAddress)
+ggplot(aes(x=n,y=sumAmount), data = golem.buyers.20) + 
+  geom_point(fill="orange", color='black', shape=21) +
+  scale_y_continuous(trans='log2') +
+  xlab("Buy frequency") + 
+  xlim(0,7200) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  geom_line()
+```
+
+```{r}
+cor(golem.buyers.20$n, golem.buyers.20$sumAmount)
+```
+
+####We can see that there there some corealtion between the number of buys and total token amount
+
+```{r}
+linearMod <- lm(sumAmount ~ n, data=golem.buyers.20)  # build linear regression model on full data
+print(linearMod)
+```
+
+```{r}
+summary(linearMod) 
+```
+
+```{r}
+modelSummary <- summary(linearMod)  # capture model summary as an object
+modelCoeffs <- modelSummary$coefficients  # model coefficients
+beta.estimate <- modelCoeffs["n", "Estimate"]  # get beta estimate for frequency of buys
+std.error <- modelCoeffs["n", "Std. Error"]  # get std.error for frequency of buys
+t_value <- beta.estimate/std.error  # calc t statistic
+p_value <- 2*pt(-abs(t_value), df=nrow(golem.buyers.20)-ncol(golem.buyers.20))  # calc p Value
+f_statistic <- linearMod$fstatistic[1]  # fstatistic
+f <- summary(linearMod)$fstatistic  # parameters for model p-value calc
+model_p <- pf(f[1], f[2], f[3], lower=FALSE)
+```
+
+```{r}
+p_value
+```
+
+####Akaike's information criterion - AIC (Akaike, 1974); We'll use this criteria to determine the best linear model. Lower score is preferred.
+
+```{r}
+AIC(linearMod)
+```
+
+### Taking K-value as 100 i.e. top 100 buyers, we'll build a regression model based on number of buys with total tokenAmount as outcome
+```{r}
+golem.buyers.100 <- head(golem.buyers,100)
+golem.buyers.100
+```
+```{r}
+cor(golem.buyers.100$n, golem.buyers.100$sumAmount)
+```
+
+```{r}
+linearMod2 <- lm(sumAmount ~ n, data=golem.buyers.100)  # build linear regression model on full data
+print(linearMod)
+```
+
+```{r}
+modelSummary2 <- summary(linearMod2)  # capture model summary as an object
+modelCoeffs2 <- modelSummary2$coefficients  # model coefficients
+beta.estimate2 <- modelCoeffs2["n", "Estimate"]  # get beta estimate for frequency of buys
+std.error2 <- modelCoeffs2["n", "Std. Error"]  # get std.error for frequency of buys
+t_value2 <- beta.estimate2/std.error2  # calc t statistic
+p_value2 <- 2*pt(-abs(t_value2), df=nrow(golem.buyers.100)-ncol(golem.buyers.100))  # calc p Value
+f_statistic2 <- linearMod$fstatistic[1]  # fstatistic
+f2 <- summary(linearMod)$fstatistic  # parameters for model p-value calc
+model_p2 <- pf(f2[1], f2[2], f2[3], lower=FALSE)
+```
+
+```{r}
+p_value
+```
+
+```{r}
+AIC(linearMod2)
+```
+
+####For Golem token, the number of buys with K value 20 fares better than K value of 100; therefore, K-value of 20 is preferred for number of buys vs totalTokenAmount linear regression model
+
+## Regression model for token 'Yocoin'
+
+####Taking K-value as 50 i.e. top 50 buyers, we'll build a regression model based on number of buys with total tokenAmount as outcome
+
+```{r}
+yocoin.buyers.50 <- head(yocoin.buyers,50)
+yocoin.buyers.50
+```
+####Creating a scatterplot to check the relation between the frequency of buys and total tokenAmount in 'Yocoin' token. We'll also transform the tokenAmount to it's square root value for better visualization
+
+```{r}
+ggplot(aes(x=n,y=sumAmount), data = yocoin.buyers.50) + 
+  geom_point(fill="orange", color='black', shape=21) +
+  scale_y_continuous(trans='log2') +
+  xlab("Buy frequency") + 
+  xlim(0,7200) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  geom_line()
+```
+
+```{r}
+cor(yocoin.buyers.50$n, yocoin.buyers.50$sumAmount)
+```
+
+```{r}
+linearMod3 <- lm(sumAmount ~ n, data=yocoin.buyers.50)  # build linear regression model on full data
+summary(linearMod3)
+```
+
+```{r}
+modelSummary3 <- summary(linearMod3)  # capture model summary as an object
+modelCoeffs3 <- modelSummary3$coefficients  # model coefficients
+beta.estimate3 <- modelCoeffs3["n", "Estimate"]  # get beta estimate for frequency of buys
+std.error3 <- modelCoeffs3["n", "Std. Error"]  # get std.error for frequency of buys
+t_value3 <- beta.estimate3/std.error3  # calc t statistic
+p_value3 <- 2*pt(-abs(t_value3), df=nrow(yocoin.buyers.50)-ncol(yocoin.buyers.50))  # calc p Value
+f_statistic3 <- linearMod3$fstatistic[1]  # fstatistic
+f3 <- summary(linearMod3)$fstatistic  # parameters for model p-value calc
+model_p3 <- pf(f3[1], f3[2], f3[3], lower=FALSE)
+```
+
+```{r}
+model_p3
+```
+
+```{r}
+AIC(linearMod3)
+```
+
+### Taking K-value as 200 i.e. top 200 buyers, we'll build a regression model based on number of buys with total tokenAmount as outcome
+
+```{r}
+yocoin.buyers.200 <- head(yocoin.buyers,200)
+yocoin.buyers.200
+```
+
+####Creating a scatterplot to check the relation between the frequency of buys and total tokenAmount in 'Yocoin' token. We'll also transform the tokenAmount to it's square root value for better visualization
+
+```{r}
+ggplot(aes(x=n,y=sumAmount), data = yocoin.buyers.200) + 
+  geom_point(fill="orange", color='black', shape=21) +
+  scale_y_continuous(trans='log2') +
+  xlab("Buy frequency") + 
+  xlim(0,7200) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  geom_line()
+```
+
+```{r}
+cor(yocoin.buyers.200$n, yocoin.buyers.200$sumAmount)
+```
+
+#### Corelation decrease when we take K-value as 200; taking k-value as 30, i.e. top 30 buyers
+
+```{r}
+yocoin.buyers.30 <- head(yocoin.buyers,30)
+yocoin.buyers.30
+```
+
+```{r}
+cor(yocoin.buyers.30$n, yocoin.buyers.30$sumAmount)
+```
+
+#### We observe that corelation increases when we take a lesser k-value. We'll proceed with this value and create the regression model
+
+```{r}
+linearMod4 <- lm(sumAmount ~ n, data=yocoin.buyers.30)  # build linear regression model on full data
+summary(linearMod4)
+```
+```{r}
+modelSummary4 <- summary(linearMod4)  # capture model summary as an object
+modelCoeffs4 <- modelSummary4$coefficients  # model coefficients
+beta.estimate4 <- modelCoeffs4["n", "Estimate"]  # get beta estimate for frequency of buys
+std.error4 <- modelCoeffs4["n", "Std. Error"]  # get std.error for frequency of buys
+t_value4 <- beta.estimate4/std.error4  # calc t statistic
+p_value4 <- 2*pt(-abs(t_value4), df=nrow(yocoin.buyers.30)-ncol(yocoin.buyers.30))  # calc p Value
+f_statistic4 <- linearMod4$fstatistic[1]  # fstatistic
+f4 <- summary(linearMod3)$fstatistic  # parameters for model p-value calc
+model_p3 <- pf(f4[1], f4[2], f4[3], lower=FALSE)
+```
+
+```{r}
+model_p3
+```
+
+```{r}
+AIC(linearMod4)
+```
+
+#### AIC value for k=30 is lower than than when k=50; We'll conclude that k=30 is a better model for token 'Yocoin'
